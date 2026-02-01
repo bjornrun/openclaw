@@ -1,6 +1,15 @@
 import { type OpenClawConfig, loadConfig } from "../config/config.js";
+import type { ModelCapabilities, ModelScore } from "../config/types.models.js";
 import { resolveOpenClawAgentDir } from "./agent-paths.js";
+import { inferModelCapabilities, type ModelCapabilityDefaults } from "./model-capabilities.js";
 import { ensureOpenClawModelsJson } from "./models-config.js";
+
+type ModelCostConfig = {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+};
 
 export type ModelCatalogEntry = {
   id: string;
@@ -9,6 +18,8 @@ export type ModelCatalogEntry = {
   contextWindow?: number;
   reasoning?: boolean;
   input?: Array<"text" | "image">;
+  cost?: ModelCostConfig;
+  capabilities?: ModelCapabilities;
 };
 
 type DiscoveredModel = {
@@ -18,6 +29,8 @@ type DiscoveredModel = {
   contextWindow?: number;
   reasoning?: boolean;
   input?: Array<"text" | "image">;
+  cost?: ModelCostConfig;
+  capabilities?: ModelCapabilities;
 };
 
 type PiSdkModule = typeof import("./pi-model-discovery.js");
@@ -92,7 +105,9 @@ export async function loadModelCatalog(params?: {
             : undefined;
         const reasoning = typeof entry?.reasoning === "boolean" ? entry.reasoning : undefined;
         const input = Array.isArray(entry?.input) ? entry.input : undefined;
-        models.push({ id, name, provider, contextWindow, reasoning, input });
+        const cost = resolveModelCost(entry?.cost);
+        const capabilities = resolveModelCapabilities(entry?.capabilities);
+        models.push({ id, name, provider, contextWindow, reasoning, input, cost, capabilities });
       }
 
       if (models.length === 0) {
@@ -122,8 +137,22 @@ export async function loadModelCatalog(params?: {
  * Check if a model supports image input based on its catalog entry.
  */
 export function modelSupportsVision(entry: ModelCatalogEntry | undefined): boolean {
+  if (typeof entry?.capabilities?.supportsVision === "boolean") {
+    return entry.capabilities.supportsVision;
+  }
   return entry?.input?.includes("image") ?? false;
 }
+
+export function modelCatalogEntryToCapabilities(
+  entry: ModelCatalogEntry,
+  defaults?: ModelCapabilityDefaults,
+): ModelCapabilities {
+  return inferModelCapabilities(entry, defaults);
+}
+
+export type ModelRefWithScore = Pick<ModelScore, "provider" | "model"> & {
+  score?: ModelScore;
+};
 
 /**
  * Find a model in the catalog by provider and model ID.
@@ -140,4 +169,39 @@ export function findModelInCatalog(
       entry.provider.toLowerCase() === normalizedProvider &&
       entry.id.toLowerCase() === normalizedModelId,
   );
+}
+
+function resolveModelCost(value: unknown): ModelCostConfig | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const cost = value as ModelCostConfig;
+  const input =
+    typeof cost.input === "number" && Number.isFinite(cost.input) ? cost.input : undefined;
+  const output =
+    typeof cost.output === "number" && Number.isFinite(cost.output) ? cost.output : undefined;
+  const cacheRead =
+    typeof cost.cacheRead === "number" && Number.isFinite(cost.cacheRead)
+      ? cost.cacheRead
+      : undefined;
+  const cacheWrite =
+    typeof cost.cacheWrite === "number" && Number.isFinite(cost.cacheWrite)
+      ? cost.cacheWrite
+      : undefined;
+  if (
+    input === undefined &&
+    output === undefined &&
+    cacheRead === undefined &&
+    cacheWrite === undefined
+  ) {
+    return undefined;
+  }
+  return { input, output, cacheRead, cacheWrite };
+}
+
+function resolveModelCapabilities(value: unknown): ModelCapabilities | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  return value as ModelCapabilities;
 }

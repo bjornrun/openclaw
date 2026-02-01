@@ -5,8 +5,9 @@ import {
   resolveCopilotApiToken,
 } from "../providers/github-copilot-token.js";
 import { ensureAuthProfileStore, listProfilesForProvider } from "./auth-profiles.js";
-import { discoverBedrockModels } from "./bedrock-discovery.js";
 import { resolveAwsSdkEnvVarName, resolveEnvApiKey } from "./model-auth.js";
+import { discoverBedrockModels } from "./bedrock-discovery.js";
+import { inferModelCapabilities } from "./model-capabilities.js";
 import {
   buildSyntheticModelDefinition,
   SYNTHETIC_BASE_URL,
@@ -65,8 +66,7 @@ const QWEN_PORTAL_DEFAULT_COST = {
   cacheWrite: 0,
 };
 
-const OLLAMA_BASE_URL = "http://127.0.0.1:11434/v1";
-const OLLAMA_API_BASE_URL = "http://127.0.0.1:11434";
+const OLLAMA_DEFAULT_HOST = "http://127.0.0.1:11434";
 const OLLAMA_DEFAULT_CONTEXT_WINDOW = 128000;
 const OLLAMA_DEFAULT_MAX_TOKENS = 8192;
 const OLLAMA_DEFAULT_COST = {
@@ -91,14 +91,40 @@ interface OllamaTagsResponse {
   models: OllamaModel[];
 }
 
-async function discoverOllamaModels(): Promise<ModelDefinitionConfig[]> {
+function resolveOllamaEndpoints(): { baseUrl: string; apiBaseUrl: string } {
+  const rawHost = process.env.OLLAMA_HOST?.trim();
+  const host = rawHost && rawHost.length > 0 ? rawHost : OLLAMA_DEFAULT_HOST;
+  const normalized = host.replace(/\/+$/, "");
+  const apiBaseUrl = normalized.replace(/\/v1$/i, "");
+  const baseUrl = normalized.toLowerCase().endsWith("/v1") ? normalized : `${normalized}/v1`;
+  return { baseUrl, apiBaseUrl };
+}
+
+function resolveOllamaAuthHeader(store: ReturnType<typeof ensureAuthProfileStore>): {
+  Authorization: string;
+} | null {
+  const envKey = resolveEnvApiKey("ollama")?.apiKey;
+  const profileKey = resolveApiKeyFromProfiles({ provider: "ollama", store });
+  const token = envKey ?? profileKey;
+  if (!token?.trim()) {
+    return null;
+  }
+  return { Authorization: `Bearer ${token}` };
+}
+
+async function discoverOllamaModels(params: {
+  store: ReturnType<typeof ensureAuthProfileStore>;
+}): Promise<ModelDefinitionConfig[]> {
   // Skip Ollama discovery in test environments
   if (process.env.VITEST || process.env.NODE_ENV === "test") {
     return [];
   }
   try {
-    const response = await fetch(`${OLLAMA_API_BASE_URL}/api/tags`, {
+    const { apiBaseUrl } = resolveOllamaEndpoints();
+    const authHeader = resolveOllamaAuthHeader(params.store);
+    const response = await fetch(`${apiBaseUrl}/api/tags`, {
       signal: AbortSignal.timeout(5000),
+      headers: authHeader ?? undefined,
     });
     if (!response.ok) {
       console.warn(`Failed to discover Ollama models: ${response.status}`);
@@ -111,16 +137,23 @@ async function discoverOllamaModels(): Promise<ModelDefinitionConfig[]> {
     }
     return data.models.map((model) => {
       const modelId = model.name;
-      const isReasoning =
-        modelId.toLowerCase().includes("r1") || modelId.toLowerCase().includes("reasoning");
+      const capabilities = inferModelCapabilities(
+        { id: modelId, name: modelId, cost: OLLAMA_DEFAULT_COST },
+        { defaultContextWindow: OLLAMA_DEFAULT_CONTEXT_WINDOW, defaultCostTier: "free" },
+      );
+      const input = capabilities.supportsVision
+        ? (["text", "image"] as const)
+        : (["text"] as const);
+
       return {
         id: modelId,
         name: modelId,
-        reasoning: isReasoning,
-        input: ["text"],
+        reasoning: capabilities.supportsReasoning,
+        input,
         cost: OLLAMA_DEFAULT_COST,
-        contextWindow: OLLAMA_DEFAULT_CONTEXT_WINDOW,
+        contextWindow: capabilities.contextWindow,
         maxTokens: OLLAMA_DEFAULT_MAX_TOKENS,
+        capabilities,
       };
     });
   } catch (error) {
@@ -385,10 +418,13 @@ async function buildVeniceProvider(): Promise<ProviderConfig> {
   };
 }
 
-async function buildOllamaProvider(): Promise<ProviderConfig> {
-  const models = await discoverOllamaModels();
+async function buildOllamaProvider(params: {
+  store: ReturnType<typeof ensureAuthProfileStore>;
+}): Promise<ProviderConfig> {
+  const models = await discoverOllamaModels({ store: params.store });
+  const { baseUrl } = resolveOllamaEndpoints();
   return {
-    baseUrl: OLLAMA_BASE_URL,
+    baseUrl,
     api: "openai-completions",
     models,
   };
@@ -458,7 +494,10 @@ export async function resolveImplicitProviders(params: {
     resolveEnvApiKeyVarName("ollama") ??
     resolveApiKeyFromProfiles({ provider: "ollama", store: authStore });
   if (ollamaKey) {
-    providers.ollama = { ...(await buildOllamaProvider()), apiKey: ollamaKey };
+    providers.ollama = {
+      ...(await buildOllamaProvider({ store: authStore })),
+      apiKey: ollamaKey,
+    };
   }
 
   return providers;

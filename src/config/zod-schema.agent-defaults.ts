@@ -13,6 +13,44 @@ import {
   HumanDelaySchema,
 } from "./zod-schema.core.js";
 
+const TaskTypeSchema = z.enum(["coding", "reasoning", "chat", "vision", "analysis", "general"]);
+const TaskComplexitySchema = z.enum(["simple", "moderate", "complex"]);
+const RoutingStrategySchema = z.enum(["cost-optimized", "performance-optimized", "balanced"]);
+
+const TaskRoutingRuleSchema = z
+  .object({
+    taskType: TaskTypeSchema,
+    complexity: TaskComplexitySchema.optional(),
+    preferredProviders: z.array(z.string()).optional(),
+    preferredModels: z.array(z.string()).optional(),
+    excludeProviders: z.array(z.string()).optional(),
+    minContextWindow: z.number().int().positive().optional(),
+    requireReasoning: z.boolean().optional(),
+  })
+  .strict();
+
+const ModelScoringWeightsSchema = z
+  .object({
+    capabilityMatch: z.number().min(0).max(1).default(0.4),
+    costEfficiency: z.number().min(0).max(1).default(0.3),
+    performance: z.number().min(0).max(1).default(0.2),
+    availability: z.number().min(0).max(1).default(0.1),
+  })
+  .strict();
+
+const ModelRoutingConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    strategy: RoutingStrategySchema.default("balanced"),
+    preferLocal: z.boolean().default(true),
+    localProviders: z.array(z.string()).default(["ollama"]),
+    cloudProviders: z.array(z.string()).default(["anthropic", "openai", "google"]),
+    taskRules: z.array(TaskRoutingRuleSchema).optional(),
+    scoringWeights: ModelScoringWeightsSchema.optional(),
+    fallbackBehavior: z.enum(["manual-selection", "default-model"]).default("default-model"),
+  })
+  .strict();
+
 export const AgentDefaultsSchema = z
   .object({
     model: z
@@ -153,6 +191,7 @@ export const AgentDefaultsSchema = z
       })
       .strict()
       .optional(),
+    routing: ModelRoutingConfigSchema.optional(),
     sandbox: z
       .object({
         mode: z.union([z.literal("off"), z.literal("non-main"), z.literal("all")]).optional(),

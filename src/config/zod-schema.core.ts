@@ -22,6 +22,39 @@ export const ModelCompatSchema = z
   .strict()
   .optional();
 
+const ModelTaskTypeSchema = z.union([
+  z.literal("coding"),
+  z.literal("reasoning"),
+  z.literal("chat"),
+  z.literal("vision"),
+  z.literal("analysis"),
+  z.literal("general"),
+]);
+
+const ModelTaskComplexitySchema = z.union([
+  z.literal("simple"),
+  z.literal("moderate"),
+  z.literal("complex"),
+]);
+
+const ModelCostTierSchema = z.union([
+  z.literal("free"),
+  z.literal("low"),
+  z.literal("medium"),
+  z.literal("high"),
+]);
+
+const ModelCapabilitiesSchema = z
+  .object({
+    taskTypes: z.array(ModelTaskTypeSchema),
+    maxComplexity: ModelTaskComplexitySchema,
+    supportsVision: z.boolean(),
+    supportsReasoning: z.boolean(),
+    contextWindow: z.number().positive(),
+    costTier: ModelCostTierSchema,
+  })
+  .strict();
+
 export const ModelDefinitionSchema = z
   .object({
     id: z.string().min(1),
@@ -42,6 +75,7 @@ export const ModelDefinitionSchema = z
     maxTokens: z.number().positive().optional(),
     headers: z.record(z.string(), z.string()).optional(),
     compat: ModelCompatSchema,
+    capabilities: ModelCapabilitiesSchema.optional(),
   })
   .strict();
 

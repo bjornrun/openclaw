@@ -29,6 +29,8 @@ ollama pull deepseek-r1:32b
 ```bash
 # Set environment variable
 export OLLAMA_API_KEY="ollama-local"
+# Optional: set the Ollama host (useful for Ollama Cloud or remote hosts)
+export OLLAMA_HOST="http://127.0.0.1:11434"
 
 # Or configure in your config file
 openclaw config set models.providers.ollama.apiKey "ollama-local"
@@ -48,13 +50,13 @@ openclaw config set models.providers.ollama.apiKey "ollama-local"
 
 ## Model discovery (implicit provider)
 
-When you set `OLLAMA_API_KEY` (or an auth profile) and **do not** define `models.providers.ollama`, OpenClaw discovers models from the local Ollama instance at `http://127.0.0.1:11434`:
+When you set `OLLAMA_API_KEY` (or an auth profile) and **do not** define `models.providers.ollama`, OpenClaw discovers models from the Ollama host at `OLLAMA_HOST` (default: `http://127.0.0.1:11434`):
 
-- Queries `/api/tags` and `/api/show`
-- Keeps only models that report `tools` capability
-- Marks `reasoning` when the model reports `thinking`
-- Reads `contextWindow` from `model_info["<arch>.context_length"]` when available
-- Sets `maxTokens` to 10× the context window
+- Queries `/api/tags`
+- Infers vision/coding/reasoning/context window from model name patterns
+- Sets `reasoning` + `input` based on inferred capabilities
+- Defaults `contextWindow` to 128k when not inferred
+- Sets `maxTokens` to 8192
 - Sets all costs to `0`
 
 This avoids manual model entries while keeping the catalog aligned with Ollama's capabilities.
@@ -160,7 +162,7 @@ Once configured, all your Ollama models are available:
 
 ### Reasoning models
 
-OpenClaw marks models as reasoning-capable when Ollama reports `thinking` in `/api/show`:
+OpenClaw marks models as reasoning-capable based on name patterns (e.g. `r1`, `reasoning`):
 
 ```bash
 ollama pull deepseek-r1:32b
@@ -172,7 +174,18 @@ Ollama is free and runs locally, so all model costs are set to $0.
 
 ### Context windows
 
-For auto-discovered models, OpenClaw uses the context window reported by Ollama when available, otherwise it defaults to `8192`. You can override `contextWindow` and `maxTokens` in explicit provider config.
+For auto-discovered models, OpenClaw extracts context windows from model names when possible (e.g., `32k`, `128k`), otherwise it defaults to `128000`. You can override `contextWindow` and `maxTokens` in explicit provider config.
+
+### Ollama Cloud
+
+If you use Ollama Cloud (or any remote Ollama host that requires auth), set both:
+
+```bash
+export OLLAMA_HOST="https://<your-ollama-host>"
+export OLLAMA_API_KEY="your-ollama-cloud-key"
+```
+
+OpenClaw passes the key as a Bearer token for OpenAI-compatible requests.
 
 ## Troubleshooting
 

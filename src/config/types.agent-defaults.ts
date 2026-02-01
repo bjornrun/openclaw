@@ -11,6 +11,7 @@ import type {
   SandboxPruneSettings,
 } from "./types.sandbox.js";
 import type { MemorySearchConfig } from "./types.tools.js";
+import type { ModelScoringWeights, ModelTaskComplexity, ModelTaskType } from "./types.models.js";
 
 export type AgentModelEntryConfig = {
   alias?: string;
@@ -205,6 +206,8 @@ export type AgentDefaultsConfig = {
     /** Default model selection for spawned sub-agents (string or {primary,fallbacks}). */
     model?: string | { primary?: string; fallbacks?: string[] };
   };
+  /** Task-based model routing configuration. */
+  routing?: ModelRoutingConfig;
   /** Optional sandbox settings for non-main sessions. */
   sandbox?: {
     /** Enable sandboxing for sessions. */
@@ -259,4 +262,48 @@ export type AgentCompactionMemoryFlushConfig = {
   prompt?: string;
   /** System prompt appended for the memory flush turn. */
   systemPrompt?: string;
+};
+
+/** Routing strategy for model selection. */
+export type RoutingStrategy = "cost-optimized" | "performance-optimized" | "balanced";
+
+/** Fallback behavior when routing fails. */
+export type RoutingFallbackBehavior = "manual-selection" | "default-model";
+
+/** Per-task routing rule for model selection. */
+export type TaskRoutingRule = {
+  /** Task type this rule applies to. */
+  taskType: ModelTaskType;
+  /** Optional complexity filter. */
+  complexity?: ModelTaskComplexity;
+  /** Preferred providers for this task type. */
+  preferredProviders?: string[];
+  /** Specific preferred model refs (provider/model). */
+  preferredModels?: string[];
+  /** Providers to exclude for this task type. */
+  excludeProviders?: string[];
+  /** Minimum context window required. */
+  minContextWindow?: number;
+  /** Whether reasoning capability is required. */
+  requireReasoning?: boolean;
+};
+
+/** Configuration for task-based model routing. */
+export type ModelRoutingConfig = {
+  /** Enable task-based routing (default: false for backward compatibility). */
+  enabled?: boolean;
+  /** Routing strategy (default: 'balanced'). */
+  strategy?: RoutingStrategy;
+  /** Prefer local models when suitable (default: true). */
+  preferLocal?: boolean;
+  /** Provider names considered local (default: ['ollama']). */
+  localProviders?: string[];
+  /** Provider names considered cloud (default: ['anthropic', 'openai', 'google']). */
+  cloudProviders?: string[];
+  /** Per-task routing rules. */
+  taskRules?: TaskRoutingRule[];
+  /** Custom scoring weights. */
+  scoringWeights?: ModelScoringWeights;
+  /** Fallback behavior when routing fails (default: 'default-model'). */
+  fallbackBehavior?: RoutingFallbackBehavior;
 };
