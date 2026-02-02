@@ -6,6 +6,7 @@ import type { enqueueCommand } from "../../../process/command-queue.js";
 import type { ExecElevatedDefaults, ExecToolDefaults } from "../../bash-tools.js";
 import type { BlockReplyChunking, ToolResultFormat } from "../../pi-embedded-subscribe.js";
 import type { SkillSnapshot } from "../../skills.js";
+import type { TaskClassificationHints } from "../../task-classifier.js";
 
 // Simplified tool definition for client-provided tools (OpenResponses hosted tools)
 export type ClientToolDefinition = {
@@ -95,4 +96,10 @@ export type RunEmbeddedPiAgentParams = {
   streamParams?: AgentStreamParams;
   ownerNumbers?: string[];
   enforceFinalTag?: boolean;
+  /**
+   * Optional task classification hints for telemetry and logging.
+   * These hints describe the task type and requirements that led to model selection.
+   * Used for observability - does not affect model selection (already done before calling).
+   */
+  taskHints?: TaskClassificationHints;
 };

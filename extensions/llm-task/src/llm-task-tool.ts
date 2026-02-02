@@ -9,6 +9,60 @@ import path from "node:path";
 // So we resolve internal imports dynamically with src-first, dist-fallback.
 import type { OpenClawPluginApi } from "../../../src/plugins/types.js";
 
+type RouteModelForTaskFn = (params: {
+  cfg: unknown;
+  prompt: string;
+  hasImages: boolean;
+  hints?: { requiresVision?: boolean; requiresReasoning?: boolean };
+  allowedProviders?: string[];
+}) => Promise<{
+  provider?: string;
+  model?: string;
+  manualSelectionRequired?: boolean;
+  decision?: unknown;
+}>;
+
+type ShouldUseRoutingFn = (params: { cfg: unknown; overrideModel?: string }) => boolean;
+
+async function loadTaskRouter(): Promise<{
+  routeModelForTask: RouteModelForTaskFn;
+  shouldUseRouting: ShouldUseRoutingFn;
+} | null> {
+  // Source checkout (tests/dev)
+  try {
+    const mod = await import("../../../src/agents/task-router.js");
+    if (
+      typeof (mod as any).routeModelForTask === "function" &&
+      typeof (mod as any).shouldUseRouting === "function"
+    ) {
+      return {
+        routeModelForTask: (mod as any).routeModelForTask,
+        shouldUseRouting: (mod as any).shouldUseRouting,
+      };
+    }
+  } catch {
+    // ignore
+  }
+
+  // Bundled install (built)
+  try {
+    const mod = await import("../../../agents/task-router.js");
+    if (
+      typeof mod.routeModelForTask === "function" &&
+      typeof mod.shouldUseRouting === "function"
+    ) {
+      return {
+        routeModelForTask: mod.routeModelForTask,
+        shouldUseRouting: mod.shouldUseRouting,
+      };
+    }
+  } catch {
+    // ignore
+  }
+
+  return null;
+}
+
 type RunEmbeddedPiAgentFn = (params: Record<string, unknown>) => Promise<unknown>;
 
 async function loadRunEmbeddedPiAgent(): Promise<RunEmbeddedPiAgentFn> {
@@ -93,22 +147,60 @@ export function createLlmTaskTool(api: OpenClawPluginApi) {
 
       const pluginCfg = (api.pluginConfig ?? {}) as PluginCfg;
 
+      // Check for explicit provider/model overrides from params or plugin config
+      const explicitProvider =
+        (typeof params.provider === "string" && params.provider.trim()) ||
+        (typeof pluginCfg.defaultProvider === "string" && pluginCfg.defaultProvider.trim()) ||
+        undefined;
+      const explicitModel =
+        (typeof params.model === "string" && params.model.trim()) ||
+        (typeof pluginCfg.defaultModel === "string" && pluginCfg.defaultModel.trim()) ||
+        undefined;
+
+      let provider: string | undefined = explicitProvider;
+      let model: string | undefined = explicitModel;
+
+      // If no explicit provider/model, try task-based routing
+      if (!provider || !model) {
+        const taskRouter = await loadTaskRouter();
+        if (taskRouter && taskRouter.shouldUseRouting({ cfg: api.config, overrideModel: undefined })) {
+          try {
+            const allowed = Array.isArray(pluginCfg.allowedModels) ? pluginCfg.allowedModels : undefined;
+            const allowedProviders = allowed?.map((m) => m.split("/")[0]).filter(Boolean);
+
+            const routingResult = await taskRouter.routeModelForTask({
+              cfg: api.config,
+              prompt,
+              hasImages: false,
+              hints: {
+                requiresVision: false,
+                requiresReasoning: false,
+              },
+              allowedProviders: allowedProviders?.length ? allowedProviders : undefined,
+            });
+
+            if (
+              !routingResult.manualSelectionRequired &&
+              routingResult.provider &&
+              routingResult.model
+            ) {
+              provider = provider || routingResult.provider;
+              model = model || routingResult.model;
+            }
+          } catch {
+            // Routing failed, fall back to default resolution
+          }
+        }
+      }
+
+      // Fall back to primary model from config if routing didn't provide a model
       const primary = api.config?.agents?.defaults?.model?.primary;
       const primaryProvider = typeof primary === "string" ? primary.split("/")[0] : undefined;
       const primaryModel =
         typeof primary === "string" ? primary.split("/").slice(1).join("/") : undefined;
 
-      const provider =
-        (typeof params.provider === "string" && params.provider.trim()) ||
-        (typeof pluginCfg.defaultProvider === "string" && pluginCfg.defaultProvider.trim()) ||
-        primaryProvider ||
-        undefined;
-
-      const model =
-        (typeof params.model === "string" && params.model.trim()) ||
-        (typeof pluginCfg.defaultModel === "string" && pluginCfg.defaultModel.trim()) ||
-        primaryModel ||
-        undefined;
+      provider = provider || primaryProvider;
+      model = model || primaryModel;
 
       const authProfileId =
         (typeof (params as any).authProfileId === "string" &&

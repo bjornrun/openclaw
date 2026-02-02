@@ -5,8 +5,8 @@ import {
   resolveCopilotApiToken,
 } from "../providers/github-copilot-token.js";
 import { ensureAuthProfileStore, listProfilesForProvider } from "./auth-profiles.js";
-import { resolveAwsSdkEnvVarName, resolveEnvApiKey } from "./model-auth.js";
 import { discoverBedrockModels } from "./bedrock-discovery.js";
+import { resolveAwsSdkEnvVarName, resolveEnvApiKey } from "./model-auth.js";
 import { inferModelCapabilities } from "./model-capabilities.js";
 import {
   buildSyntheticModelDefinition,
@@ -141,9 +141,9 @@ async function discoverOllamaModels(params: {
         { id: modelId, name: modelId, cost: OLLAMA_DEFAULT_COST },
         { defaultContextWindow: OLLAMA_DEFAULT_CONTEXT_WINDOW, defaultCostTier: "free" },
       );
-      const input = capabilities.supportsVision
-        ? (["text", "image"] as const)
-        : (["text"] as const);
+      const input: ("text" | "image")[] = capabilities.supportsVision
+        ? ["text", "image"]
+        : ["text"];
 
       return {
         id: modelId,

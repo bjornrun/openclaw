@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type { ExecToolDefaults } from "../../agents/bash-tools.js";
+import type { TaskClassificationHints } from "../../agents/task-classifier.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { MsgContext, TemplateContext } from "../templating.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
@@ -102,6 +103,8 @@ type RunPreparedReplyParams = {
   storePath?: string;
   workspaceDir: string;
   abortedLastRun: boolean;
+  /** Optional task classification hints for telemetry. */
+  taskHints?: TaskClassificationHints;
 };
 
 export async function runPreparedReply(
@@ -425,5 +428,6 @@ export async function runPreparedReply(
     sessionCtx,
     shouldInjectGroupIntro,
     typingMode,
+    taskHints: params.taskHints,
   });
 }

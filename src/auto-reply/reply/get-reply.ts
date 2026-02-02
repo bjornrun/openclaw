@@ -1,3 +1,4 @@
+import type { TaskClassificationHints } from "../../agents/task-classifier.js";
 import type { MsgContext } from "../templating.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
 import {
@@ -6,10 +7,12 @@ import {
   resolveSessionAgentId,
 } from "../../agents/agent-scope.js";
 import { resolveModelRefFromString } from "../../agents/model-selection.js";
+import { routeModelForTask, shouldUseRouting } from "../../agents/task-router.js";
 import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { DEFAULT_AGENT_WORKSPACE_DIR, ensureAgentWorkspace } from "../../agents/workspace.js";
 import { type OpenClawConfig, loadConfig } from "../../config/config.js";
 import { applyLinkUnderstanding } from "../../link-understanding/apply.js";
+import { getChildLogger } from "../../logging/logger.js";
 import { applyMediaUnderstanding } from "../../media-understanding/apply.js";
 import { defaultRuntime } from "../../runtime.js";
 import { resolveCommandAuthorization } from "../command-auth.js";
@@ -23,6 +26,8 @@ import { applyResetModelOverride } from "./session-reset-model.js";
 import { initSessionState } from "./session.js";
 import { stageSandboxMedia } from "./stage-sandbox-media.js";
 import { createTypingController } from "./typing.js";
+
+const log = getChildLogger({ subsystem: "get-reply" });
 
 export async function getReplyFromConfig(
   ctx: MsgContext,
@@ -202,6 +207,55 @@ export async function getReplyFromConfig(
   provider = resolvedProvider;
   model = resolvedModel;
 
+  // Apply task-based routing if enabled and no manual model override was specified
+  const hasManualModelOverride = directives.hasModelDirective;
+  const hasImages = (ctx.MediaUrls?.length ?? 0) > 0 || (opts?.images?.length ?? 0) > 0;
+  const promptText = cleanedBody || bodyStripped || "";
+  let routingTaskHints: TaskClassificationHints | undefined;
+
+  if (!hasManualModelOverride && shouldUseRouting({ cfg, overrideModel: undefined })) {
+    const taskHints: TaskClassificationHints = {
+      requiresVision: hasImages || undefined,
+      requiresReasoning:
+        resolvedReasoningLevel && resolvedReasoningLevel !== "off" ? true : undefined,
+    };
+    routingTaskHints = taskHints;
+
+    try {
+      const routingResult = await routeModelForTask({
+        cfg,
+        prompt: promptText,
+        hasImages,
+        hints: taskHints,
+        agentDir,
+      });
+
+      if (!routingResult.manualSelectionRequired && routingResult.provider && routingResult.model) {
+        log.info("Task routing selected model for auto-reply", {
+          originalProvider: provider,
+          originalModel: model,
+          routedProvider: routingResult.provider,
+          routedModel: routingResult.model,
+          taskType: routingResult.decision?.taskClassification.type,
+          complexity: routingResult.decision?.taskClassification.complexity,
+        });
+        provider = routingResult.provider;
+        model = routingResult.model;
+      } else if (routingResult.manualSelectionRequired) {
+        log.debug("Task routing requires manual selection, keeping current model", {
+          provider,
+          model,
+        });
+      }
+    } catch (err) {
+      log.warn("Task routing failed in auto-reply, keeping current model", {
+        error: err instanceof Error ? err.message : String(err),
+        provider,
+        model,
+      });
+    }
+  }
+
   const inlineActionResult = await handleInlineActions({
     ctx,
     sessionCtx,
@@ -298,5 +352,6 @@ export async function getReplyFromConfig(
     storePath,
     workspaceDir,
     abortedLastRun,
+    taskHints: routingTaskHints,
   });
 }

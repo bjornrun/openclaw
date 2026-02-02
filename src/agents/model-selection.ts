@@ -1,8 +1,13 @@
 import type { OpenClawConfig } from "../config/config.js";
 import type { ModelCatalogEntry } from "./model-catalog.js";
+import type { TaskClassificationHints } from "./task-classifier.js";
+import { getChildLogger } from "../logging/logger.js";
 import { resolveAgentModelPrimary } from "./agent-scope.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
 import { normalizeGoogleModelId } from "./models-config.providers.js";
+import { routeModelForTask, shouldUseRouting } from "./task-router.js";
+
+const log = getChildLogger({ subsystem: "model-selection" });
 
 export type ModelRef = {
   provider: string;
@@ -224,6 +229,87 @@ export function resolveDefaultModelForAgent(params: {
     defaultProvider: DEFAULT_PROVIDER,
     defaultModel: DEFAULT_MODEL,
   });
+}
+
+/**
+ * Extended parameters for task-aware model resolution.
+ */
+export type ResolveDefaultModelWithRoutingParams = {
+  cfg: OpenClawConfig;
+  agentId?: string;
+  /** User prompt text for task classification. */
+  prompt?: string;
+  /** Whether the request includes images. */
+  hasImages?: boolean;
+  /** Optional task classification hints. */
+  hints?: TaskClassificationHints;
+  /** Agent directory for auth profile resolution. */
+  agentDir?: string;
+};
+
+/**
+ * Resolve the default model for an agent with optional task-based routing.
+ *
+ * When routing is enabled and task context is provided, this function will
+ * attempt to select the best model based on task classification. If routing
+ * fails or is disabled, it falls back to the standard model resolution.
+ *
+ * @param params - Resolution parameters including optional task context
+ * @returns Promise resolving to the selected model reference
+ *
+ * @example
+ * ```typescript
+ * const model = await resolveDefaultModelForAgentWithRouting({
+ *   cfg,
+ *   agentId: "my-agent",
+ *   prompt: "Fix the bug in auth.ts",
+ *   hasImages: false,
+ * });
+ * ```
+ */
+export async function resolveDefaultModelForAgentWithRouting(
+  params: ResolveDefaultModelWithRoutingParams,
+): Promise<ModelRef> {
+  const { cfg, agentId, prompt, hasImages, hints, agentDir } = params;
+
+  // Check if routing should be used and task context is provided
+  if (prompt && shouldUseRouting({ cfg, overrideModel: undefined })) {
+    try {
+      const routingResult = await routeModelForTask({
+        cfg,
+        prompt,
+        hasImages: hasImages ?? false,
+        hints,
+        agentDir,
+      });
+
+      // If routing succeeded and didn't require manual selection
+      if (!routingResult.manualSelectionRequired && routingResult.provider && routingResult.model) {
+        log.debug("Task routing selected model", {
+          provider: routingResult.provider,
+          model: routingResult.model,
+          agentId,
+        });
+        return {
+          provider: routingResult.provider,
+          model: routingResult.model,
+        };
+      }
+
+      // Manual selection required - fall back to default
+      if (routingResult.manualSelectionRequired) {
+        log.debug("Task routing requires manual selection, using default model", { agentId });
+      }
+    } catch (err) {
+      log.warn("Task routing failed, falling back to default model", {
+        error: err instanceof Error ? err.message : String(err),
+        agentId,
+      });
+    }
+  }
+
+  // Fall back to standard resolution
+  return resolveDefaultModelForAgent({ cfg, agentId });
 }
 
 export function buildAllowedModelSet(params: {
