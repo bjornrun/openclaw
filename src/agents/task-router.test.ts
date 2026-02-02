@@ -754,7 +754,7 @@ describe("routeModelForTask", () => {
     });
 
     expect(result.provider).toBe("anthropic");
-    expect(result.model).toBe("claude-sonnet-4-20250514");
+    expect(result.model).toBe("claude-opus-4-5");
   });
 
   it("should honor manual override even when routing is disabled", async () => {
